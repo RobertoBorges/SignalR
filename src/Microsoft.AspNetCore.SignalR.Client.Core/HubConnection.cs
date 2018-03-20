@@ -136,13 +136,11 @@ namespace Microsoft.AspNetCore.SignalR.Client
                 }
 
                 _connection = _connectionFactory();
-                _connection.OnReceived((data, state) => ((HubConnection)state).OnDataReceivedAsync(data), this);
-
-                // Bind the closed event. OnClosed is 'async Task' but Closed needs a void-returning method.
-                // We don't want to use 'async void' so we just dump the task on the floor.
-                _connection.Closed += (c, e) => _ = OnClosed(c, e);
-
                 await _connection.StartAsync(_protocol.TransferFormat);
+
+                _connection.Transport.Input.OnWriterCompleted((ex, self) => ((HubConnection)self).OnWriterCompleted(ex), this);
+                _connection.Transport.Output.OnReaderCompleted((ex, self) => ((HubConnection)self).OnReaderCompleted(ex), this);
+
                 _needKeepAlive = _connection.Features.Get<IConnectionInherentKeepAliveFeature>() == null;
                 _receivedHandshakeResponse = false;
 
@@ -153,7 +151,7 @@ namespace Microsoft.AspNetCore.SignalR.Client
                 {
                     Log.SendingHubHandshake(_logger);
                     HandshakeProtocol.WriteRequestMessage(new HandshakeRequestMessage(_protocol.Name), memoryStream);
-                    await _connection.SendAsync(memoryStream.ToArray(), _connectionActive.Token);
+                    await WriteAsync(memoryStream.ToArray(), _connectionActive.Token);
                 }
 
                 ResetTimeoutTimer();
@@ -427,7 +425,21 @@ namespace Microsoft.AspNetCore.SignalR.Client
             }
         }
 
-        private async Task OnDataReceivedAsync(byte[] data)
+        private async Task ReceiveLoop()
+        {
+            try
+            {
+                var result = await _connection.Transport.Input.ReadAsync();
+                var buffer = result.Buffer;
+
+                if(result.IsCanceled)
+                {
+
+                }
+            }
+        }
+
+        private async Task ProcessMessageAsync(byte[] data)
         {
             if (_disposed)
             {
@@ -819,23 +831,19 @@ namespace Microsoft.AspNetCore.SignalR.Client
             }
         }
 
-        private struct InvocationHandler
+        private Task WriteAsync(byte[] payload, CancellationToken token)
         {
-            public Type[] ParameterTypes { get; }
-            private readonly Func<object[], object, Task> _callback;
-            private readonly object _state;
+            throw new NotImplementedException();
+        }
 
-            public InvocationHandler(Type[] parameterTypes, Func<object[], object, Task> callback, object state)
-            {
-                _callback = callback;
-                ParameterTypes = parameterTypes;
-                _state = state;
-            }
+        private void OnReaderCompleted(Exception ex)
+        {
+            throw new NotImplementedException();
+        }
 
-            public Task InvokeAsync(object[] parameters)
-            {
-                return _callback(parameters, _state);
-            }
+        private void OnWriterCompleted(Exception ex)
+        {
+            throw new NotImplementedException();
         }
 
         // Debug.Assert plays havoc with Unit Tests. But I want something that I can "assert" only in Debug builds.
@@ -856,6 +864,25 @@ namespace Microsoft.AspNetCore.SignalR.Client
         {
             AssertInConnectionLock();
             SafeAssert(_connection != null, "We don't have a connection!");
+        }
+
+        private struct InvocationHandler
+        {
+            public Type[] ParameterTypes { get; }
+            private readonly Func<object[], object, Task> _callback;
+            private readonly object _state;
+
+            public InvocationHandler(Type[] parameterTypes, Func<object[], object, Task> callback, object state)
+            {
+                _callback = callback;
+                ParameterTypes = parameterTypes;
+                _state = state;
+            }
+
+            public Task InvokeAsync(object[] parameters)
+            {
+                return _callback(parameters, _state);
+            }
         }
     }
 }

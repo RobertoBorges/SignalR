@@ -13,7 +13,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.AspNetCore.Protocols;
 
-namespace Microsoft.AspNetCore.Sockets.Client
+namespace Microsoft.AspNetCore.Sockets.Client.Internal
 {
     public partial class LongPollingTransport : ITransport
     {
