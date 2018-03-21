@@ -17,7 +17,6 @@ namespace Microsoft.AspNetCore.Sockets.Client
 
         Task StartAsync();
         Task StartAsync(TransferFormat transferFormat);
-        Task AbortAsync(Exception ex);
         Task DisposeAsync();
     }
 }

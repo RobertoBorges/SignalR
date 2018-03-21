@@ -26,7 +26,7 @@ namespace Microsoft.AspNetCore.Sockets.Client
         private readonly ILoggerFactory _loggerFactory;
         private readonly ILogger _logger;
 
-        private volatile int _state = (int)ConnectionState.Disconnected;
+        private volatile ConnectionState _state = ConnectionState.Disconnected;
         private TaskCompletionSource<object> _startTcs = new TaskCompletionSource<object>();
         private TaskCompletionSource<object> _disposeTcs = new TaskCompletionSource<object>();
 
@@ -140,17 +140,6 @@ namespace Microsoft.AspNetCore.Sockets.Client
                 // Unblock any concurrent StartAsync operations waiting for us to finish.
                 _startTcs.TrySetResult(null);
             }
-        }
-
-
-        public Task AbortAsync(Exception exception)
-        {
-            // Simulate an error occurring in the transport by completing the pipe
-            // heading to the Application with that exception (normally the Transport would produce this exception)
-            _applicationPipe.Output.Complete(exception);
-
-            // Wait for shutdown.
-            return DisposeAsync();
         }
 
         public async Task DisposeAsync() => await DisposeAsyncCore().ForceAsync();
