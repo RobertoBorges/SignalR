@@ -86,97 +86,62 @@ namespace Microsoft.AspNetCore.SignalR.Client
         {
             CheckDisposed();
             await StartAsyncCore().ForceAsync();
-        }
 
-        private void TimeoutElapsed()
-        {
-            // We don't lock here. The worst case scenarios for this race are:
-            // * _connection is nulled out after we capture it, because we're being stopped/disposed.
-            //   In that case, we could end up cancelling due to a timeout instead of shutting down
-            //   cleanly, but the timeout elapsed so the error is accurate
-            // * _connection is null, but one gets started after we capture it, because we're being restarted.
-            //   In that case, we don't care about this timeout, we were shutdown and a new timeout will be started.
-            var connection = _connection;
-            if (connection != null)
+            async Task StartAsyncCore()
             {
-                _connection.Transport.Input.CancelPendingRead();
-            }
-        }
-
-        private void ResetTimeoutTimer()
-        {
-            if (_needKeepAlive)
-            {
-                Log.ResettingKeepAliveTimer(_logger);
-
-                // If the connection is disposed while this callback is firing, or if the callback is fired after dispose
-                // (which can happen because of some races), this will throw ObjectDisposedException. That's OK, because
-                // we don't need the timer anyway.
+                await _connectionLock.WaitAsync();
                 try
                 {
-                    _timeoutTimer.Change(ServerTimeout, Timeout.InfiniteTimeSpan);
-                }
-                catch (ObjectDisposedException)
-                {
-                    // This is OK!
-                }
-            }
-        }
-
-        private async Task StartAsyncCore()
-        {
-            await _connectionLock.WaitAsync();
-            try
-            {
-                if(_receiveTask != null)
-                {
-                    // Wait for the previous stop to finish.
-                    await _receiveTask;
-                }
-
-                CheckDisposed();
-
-                if (_connection != null)
-                {
-                    // We have an existing connection!
-                    throw new InvalidOperationException($"The '{nameof(StartAsync)}' method cannot be called if the connection has already been started.");
-                }
-
-                _connection = _connectionFactory();
-                await _connection.StartAsync(_protocol.TransferFormat);
-
-                _needKeepAlive = _connection.Features.Get<IConnectionInherentKeepAliveFeature>() == null;
-
-                Log.HubProtocol(_logger, _protocol.Name);
-
-                _connectionActive = new CancellationTokenSource();
-                using (var memoryStream = new MemoryStream())
-                {
-                    Log.SendingHubHandshake(_logger);
-                    HandshakeProtocol.WriteRequestMessage(new HandshakeRequestMessage(_protocol.Name), memoryStream);
-                    var result = await WriteAsync(memoryStream.ToArray(), _connectionActive.Token);
-                    if (result.IsCompleted)
+                    if (_receiveTask != null)
                     {
-                        // The other side disconnected
-                        throw new InvalidOperationException("The server disconnected before the handshake was completed");
+                        // Wait for the previous stop to finish.
+                        await _receiveTask;
                     }
+
+                    CheckDisposed();
+
+                    if (_connection != null)
+                    {
+                        // We have an existing connection!
+                        throw new InvalidOperationException($"The '{nameof(StartAsync)}' method cannot be called if the connection has already been started.");
+                    }
+
+                    _connection = _connectionFactory();
+                    await _connection.StartAsync(_protocol.TransferFormat);
+
+                    _needKeepAlive = _connection.Features.Get<IConnectionInherentKeepAliveFeature>() == null;
+
+                    Log.HubProtocol(_logger, _protocol.Name);
+
+                    _connectionActive = new CancellationTokenSource();
+                    using (var memoryStream = new MemoryStream())
+                    {
+                        Log.SendingHubHandshake(_logger);
+                        HandshakeProtocol.WriteRequestMessage(new HandshakeRequestMessage(_protocol.Name), memoryStream);
+                        var result = await WriteAsync(memoryStream.ToArray(), _connectionActive.Token);
+                        if (result.IsCompleted)
+                        {
+                            // The other side disconnected
+                            throw new InvalidOperationException("The server disconnected before the handshake was completed");
+                        }
+                    }
+
+                    // Wait for the handshake response
+                    await ReceiveHandshakeResponseAsync();
+
+                    _receiveTask = ReceiveLoop();
                 }
-
-                // Wait for the handshake response
-                await ReceiveHandshakeResponseAsync();
-
-                _receiveTask = ReceiveLoop();
-            }
-            catch when (_connection != null)
-            {
-                // If we got partially started, we need to shut down the connection before we rethrow.
-                await _connection.DisposeAsync();
-                _connection = null;
-                throw;
-            }
-            finally
-            {
-                _connectionLock.Release();
+                catch when (_connection != null)
+                {
+                    // If we got partially started, we need to shut down the connection before we rethrow.
+                    await _connection.DisposeAsync();
+                    _connection = null;
+                    throw;
+                }
+                finally
+                {
+                    _connectionLock.Release();
+                }
             }
         }
 
@@ -184,19 +149,19 @@ namespace Microsoft.AspNetCore.SignalR.Client
         {
             CheckDisposed();
             await StopAsyncCore().ForceAsync();
-        }
 
-        private async Task StopAsyncCore()
-        {
-            await _connectionLock.WaitAsync();
-            try
+            async Task StopAsyncCore()
             {
-                CheckDisposed();
-                await StopAsyncCoreUnlocked();
-            }
-            finally
-            {
-                _connectionLock.Release();
+                await _connectionLock.WaitAsync();
+                try
+                {
+                    CheckDisposed();
+                    await StopAsyncCoreUnlocked();
+                }
+                finally
+                {
+                    _connectionLock.Release();
+                }
             }
         }
 
@@ -209,46 +174,29 @@ namespace Microsoft.AspNetCore.SignalR.Client
             }
 
             await DisposeAsyncCore().ForceAsync();
-        }
 
-        private async Task DisposeAsyncCore()
-        {
-            await _connectionLock.WaitAsync();
-            try
+            async Task DisposeAsyncCore()
             {
-                if (_disposed)
+                await _connectionLock.WaitAsync();
+                try
                 {
-                    // We're already disposed
-                    return;
+                    if (_disposed)
+                    {
+                        // We're already disposed
+                        return;
+                    }
+
+                    // Stop the connection (if it's running)
+                    await StopAsyncCoreUnlocked();
+
+                    // Mark ourselves as disposed, so we can't be restarted.
+                    _disposed = true;
                 }
-
-                // Stop the connection (if it's running)
-                await StopAsyncCoreUnlocked();
-
-                // Mark ourselves as disposed, so we can't be restarted.
-                _disposed = true;
+                finally
+                {
+                    _connectionLock.Release();
+                }
             }
-            finally
-            {
-                _connectionLock.Release();
-            }
-        }
-
-        private async Task StopAsyncCoreUnlocked()
-        {
-            if (_connection == null)
-            {
-                // No-op if we're already stopped.
-                return;
-            }
-
-            // Complete our write pipe, which should cause everything to shut down
-            _connection.Transport.Output.Complete();
-
-            // Wait for the receive loop to shut down (which will terminate the connection)
-            await _receiveTask;
-
-            _receiveTask = null;
         }
 
         public IDisposable On(string methodName, Type[] parameterTypes, Func<object[], object, Task> handler, object state)
@@ -256,7 +204,6 @@ namespace Microsoft.AspNetCore.SignalR.Client
             CheckDisposed();
 
             // It's OK to be disposed while registering a callback, we'll just never call the callback anyway (as with all the callbacks registered before disposal).
-
             var invocationHandler = new InvocationHandler(parameterTypes, handler, state);
             var invocationList = _handlers.AddOrUpdate(methodName, _ => new List<InvocationHandler> { invocationHandler },
                 (_, invocations) =>
@@ -746,12 +693,12 @@ namespace Microsoft.AspNetCore.SignalR.Client
             _connection = null;
 
             // Fire-and-forget the closed event
-            var ex = timedOut ? new TimeoutException($"Server timeout ({ServerTimeout.TotalMilliseconds:0.00}ms) elapsed without receiving a message from the server.") : null;
+            var exception = timedOut ? new TimeoutException($"Server timeout ({ServerTimeout.TotalMilliseconds:0.00}ms) elapsed without receiving a message from the server.") : null;
             _ = Task.Run(() =>
             {
                 try
                 {
-                    Closed?.Invoke(ex);
+                    Closed?.Invoke(exception);
                 }
                 catch (Exception ex)
                 {
@@ -762,6 +709,58 @@ namespace Microsoft.AspNetCore.SignalR.Client
 
         private ValueTask<FlushResult> WriteAsync(byte[] payload, CancellationToken token) =>
             _connection.Transport.Output.WriteAsync(payload, token);
+
+        private async Task StopAsyncCoreUnlocked()
+        {
+            if (_connection == null)
+            {
+                // No-op if we're already stopped.
+                return;
+            }
+
+            // Complete our write pipe, which should cause everything to shut down
+            _connection.Transport.Output.Complete();
+
+            // Wait for the receive loop to shut down (which will terminate the connection)
+            await _receiveTask;
+
+            _receiveTask = null;
+        }
+
+        private void TimeoutElapsed()
+        {
+            // We don't lock here. The worst case scenarios for this race are:
+            // * _connection is nulled out after we capture it, because we're being stopped/disposed.
+            //   In that case, we could end up cancelling due to a timeout instead of shutting down
+            //   cleanly, but the timeout elapsed so the error is accurate
+            // * _connection is null, but one gets started after we capture it, because we're being restarted.
+            //   In that case, we don't care about this timeout, we were shutdown and a new timeout will be started.
+            var connection = _connection;
+            if (connection != null)
+            {
+                _connection.Transport.Input.CancelPendingRead();
+            }
+        }
+
+        private void ResetTimeoutTimer()
+        {
+            if (_needKeepAlive)
+            {
+                Log.ResettingKeepAliveTimer(_logger);
+
+                // If the connection is disposed while this callback is firing, or if the callback is fired after dispose
+                // (which can happen because of some races), this will throw ObjectDisposedException. That's OK, because
+                // we don't need the timer anyway.
+                try
+                {
+                    _timeoutTimer.Change(ServerTimeout, Timeout.InfiniteTimeSpan);
+                }
+                catch (ObjectDisposedException)
+                {
+                    // This is OK!
+                }
+            }
+        }
 
         // Debug.Assert plays havoc with Unit Tests. But I want something that I can "assert" only in Debug builds.
         [Conditional("DEBUG")]
