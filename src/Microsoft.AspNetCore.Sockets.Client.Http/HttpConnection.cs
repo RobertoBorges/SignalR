@@ -26,7 +26,7 @@ namespace Microsoft.AspNetCore.Sockets.Client
         private readonly ILoggerFactory _loggerFactory;
         private readonly ILogger _logger;
 
-        private volatile ConnectionState _state = ConnectionState.Disconnected;
+        private int _state = (int)ConnectionState.Disconnected;
         private TaskCompletionSource<object> _startTcs = new TaskCompletionSource<object>();
         private TaskCompletionSource<object> _disposeTcs = new TaskCompletionSource<object>();
 
@@ -127,11 +127,6 @@ namespace Microsoft.AspNetCore.Sockets.Client
             else
             {
                 CheckDisposed();
-
-                if (_transport != null)
-                {
-                    throw new InvalidOperationException($"The '{nameof(StartAsync)}' method cannot be called if the connection has already been started.");
-                }
 
                 Log.HttpConnectionStarting(_logger);
 

@@ -137,18 +137,13 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                 try
                 {
                     var receiveTcs = new TaskCompletionSource<byte[]>();
-                    connection.OnReceived((data, state) =>
-                    {
-                        var tcs = (TaskCompletionSource<byte[]>)state;
-                        tcs.TrySetResult(data);
-                        return Task.CompletedTask;
-                    }, receiveTcs);
 
                     var message = new byte[] { 42 };
                     await connection.StartAsync(TransferFormat.Binary).OrTimeout();
-                    await connection.SendAsync(message).OrTimeout();
 
-                    var receivedData = await receiveTcs.Task.OrTimeout();
+                    await connection.Transport.Output.WriteAsync(message).OrTimeout();
+
+                    var receivedData = await connection.Transport.Input.ReadAllAsync();
                     Assert.Equal(message, receivedData);
                 }
                 catch (Exception ex)
