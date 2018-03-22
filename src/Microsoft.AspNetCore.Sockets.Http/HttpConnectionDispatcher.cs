@@ -570,10 +570,15 @@ namespace Microsoft.AspNetCore.Sockets
             {
                 var transportPipeOptions = new PipeOptions(pauseWriterThreshold: options.TransportMaxBufferSize, resumeWriterThreshold: options.TransportMaxBufferSize / 2, readerScheduler: PipeScheduler.ThreadPool, useSynchronizationContext: false);
                 var appPipeOptions = new PipeOptions(pauseWriterThreshold: options.ApplicationMaxBufferSize, resumeWriterThreshold: options.ApplicationMaxBufferSize / 2, readerScheduler: PipeScheduler.ThreadPool, useSynchronizationContext: false);
-                var pair = DuplexPipe.CreateConnectionPair(transportPipeOptions, appPipeOptions);
-                connection.Transport = pair.Application;
-                connection.Application = pair.Transport;
+                EnsureTransport(connection, transportPipeOptions, appPipeOptions);
             }
+        }
+
+        protected virtual void EnsureTransport(DefaultConnectionContext connection, PipeOptions transportPipeOptions, PipeOptions appPipeOptions)
+        {
+            var pair = DuplexPipe.CreateConnectionPair(transportPipeOptions, appPipeOptions);
+            connection.Transport = pair.Application;
+            connection.Application = pair.Transport;
         }
 
         // This is only used for WebSockets connections, which can connect directly without negotiating

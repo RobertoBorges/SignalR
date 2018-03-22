@@ -59,7 +59,7 @@ namespace Microsoft.AspNetCore.SignalR
 
         public string UserIdentifier { get; private set; }
 
-        internal virtual IHubProtocol Protocol { get; set; }
+        public virtual IHubProtocol Protocol { get; set; }
 
         internal ExceptionDispatchInfo AbortException { get; private set; }
 

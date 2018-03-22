@@ -20,21 +20,25 @@ namespace Microsoft.AspNetCore.SignalR.Internal
 {
     public partial class DefaultHubDispatcher<THub> : HubDispatcher<THub> where THub : Hub
     {
+        private readonly HubLifetimeManager<THub> _lifetimeManager;
         private readonly Dictionary<string, HubMethodDescriptor> _methods = new Dictionary<string, HubMethodDescriptor>(StringComparer.OrdinalIgnoreCase);
         private readonly IServiceScopeFactory _serviceScopeFactory;
         private readonly IHubContext<THub> _hubContext;
         private readonly ILogger<HubDispatcher<THub>> _logger;
 
-        public DefaultHubDispatcher(IServiceScopeFactory serviceScopeFactory, IHubContext<THub> hubContext, ILogger<DefaultHubDispatcher<THub>> logger)
+        public DefaultHubDispatcher(IServiceScopeFactory serviceScopeFactory, IHubContext<THub> hubContext, HubLifetimeManager<THub> lifetimeManager, ILogger<DefaultHubDispatcher<THub>> logger)
         {
             _serviceScopeFactory = serviceScopeFactory;
             _hubContext = hubContext;
             _logger = logger;
+            _lifetimeManager = lifetimeManager;
             DiscoverHubMethods();
         }
 
         public override async Task OnConnectedAsync(HubConnectionContext connection)
         {
+            await _lifetimeManager.OnConnectedAsync(connection);
+
             using (var scope = _serviceScopeFactory.CreateScope())
             {
                 var hubActivator = scope.ServiceProvider.GetRequiredService<IHubActivator<THub>>();
@@ -67,6 +71,8 @@ namespace Microsoft.AspNetCore.SignalR.Internal
                     hubActivator.Release(hub);
                 }
             }
+
+            await _lifetimeManager.OnDisconnectedAsync(connection);
         }
 
         public override async Task DispatchMessageAsync(HubConnectionContext connection, HubMessage hubMessage)

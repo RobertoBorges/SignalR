@@ -28,6 +28,10 @@ namespace Microsoft.AspNetCore.Sockets
 
         protected override string GetConnectionId(HttpContext context) => context.Request.Query["connectionToken"];
 
+        protected override void EnsureTransport(DefaultConnectionContext connection, PipeOptions transportPipeOptions, PipeOptions appPipeOptions)
+        {
+            base.EnsureTransport(connection, new PipeOptions(readerScheduler: PipeScheduler.Inline), new PipeOptions(readerScheduler: PipeScheduler.Inline));
+        }
         public async Task ExecuteNegotiateAsync(HttpContext context, HttpSocketOptions options, ConnectionDelegate connectionDelegate)
         {
             var logScope = new ConnectionLogScope(GetConnectionId(context));

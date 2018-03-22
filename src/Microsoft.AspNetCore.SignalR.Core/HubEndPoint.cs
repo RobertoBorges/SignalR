@@ -17,7 +17,6 @@ namespace Microsoft.AspNetCore.SignalR
 {
     public class HubEndPoint<THub> : EndPoint where THub : Hub
     {
-        private readonly HubLifetimeManager<THub> _lifetimeManager;
         private readonly ILoggerFactory _loggerFactory;
         private readonly ILogger<HubEndPoint<THub>> _logger;
         private readonly IHubProtocolResolver _protocolResolver;
@@ -26,8 +25,7 @@ namespace Microsoft.AspNetCore.SignalR
         private readonly IUserIdProvider _userIdProvider;
         private readonly HubDispatcher<THub> _dispatcher;
 
-        public HubEndPoint(HubLifetimeManager<THub> lifetimeManager,
-                           IHubProtocolResolver protocolResolver,
+        public HubEndPoint(IHubProtocolResolver protocolResolver,
                            IOptions<HubOptions> globalHubOptions,
                            IOptions<HubOptions<THub>> hubOptions,
                            ILoggerFactory loggerFactory,
@@ -35,7 +33,6 @@ namespace Microsoft.AspNetCore.SignalR
                            HubDispatcher<THub> dispatcher)
         {
             _protocolResolver = protocolResolver;
-            _lifetimeManager = lifetimeManager;
             _loggerFactory = loggerFactory;
             _hubOptions = hubOptions.Value;
             _globalHubOptions = globalHubOptions.Value;
@@ -64,15 +61,7 @@ namespace Microsoft.AspNetCore.SignalR
                 return;
             }
 
-            try
-            {
-                await _lifetimeManager.OnConnectedAsync(connectionContext);
-                await RunHubAsync(connectionContext);
-            }
-            finally
-            {
-                await _lifetimeManager.OnDisconnectedAsync(connectionContext);
-            }
+            await RunHubAsync(connectionContext);
         }
 
         private async Task RunHubAsync(HubConnectionContext connection)
@@ -85,7 +74,7 @@ namespace Microsoft.AspNetCore.SignalR
             {
                 Log.ErrorDispatchingHubEvent(_logger, "OnConnectedAsync", ex);
 
-                await SendCloseAsync(connection, ex);
+                // await SendCloseAsync(connection, ex);
 
                 // return instead of throw to let close message send successfully
                 return;
@@ -111,7 +100,7 @@ namespace Microsoft.AspNetCore.SignalR
         private async Task HubOnDisconnectedAsync(HubConnectionContext connection, Exception exception)
         {
             // send close message before aborting the connection
-            await SendCloseAsync(connection, exception);
+            // await SendCloseAsync(connection, exception);
 
             // We wait on abort to complete, this is so that we can guarantee that all callbacks have fired
             // before OnDisconnectedAsync
