@@ -28,6 +28,7 @@ namespace Microsoft.AspNetCore.SignalR.Internal.Protocol
                 writer.WritePropertyName(ProtocolPropertyName);
                 writer.WriteValue(requestMessage.Protocol);
                 writer.WriteEndObject();
+                writer.Flush();
             }
 
             TextMessageFormatter.WriteRecordSeparator(output);
@@ -44,6 +45,7 @@ namespace Microsoft.AspNetCore.SignalR.Internal.Protocol
                     writer.WriteValue(responseMessage.Error);
                 }
                 writer.WriteEndObject();
+                writer.Flush();
             }
 
             TextMessageFormatter.WriteRecordSeparator(output);
@@ -51,7 +53,10 @@ namespace Microsoft.AspNetCore.SignalR.Internal.Protocol
 
         private static JsonTextWriter CreateJsonTextWriter(Stream output)
         {
-            return new JsonTextWriter(new StreamWriter(output, _utf8NoBom, 1024, leaveOpen: true));
+            var writer = new JsonTextWriter(new StreamWriter(output, _utf8NoBom, 1024, leaveOpen: true));
+            writer.CloseOutput = false;
+
+            return writer;
         }
 
         private static JsonTextReader CreateJsonTextReader(ReadOnlyMemory<byte> payload)
