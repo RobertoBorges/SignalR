@@ -13,6 +13,7 @@ namespace Microsoft.Extensions.DependencyInjection
             services.AddRouting();
             services.AddAuthorizationPolicyEvaluator();
             services.TryAddSingleton<HttpConnectionDispatcher>();
+            services.TryAddSingleton<LegacyHttpConnectionDispatcher>();
             services.TryAddSingleton<ConnectionManager>();
             return services;
         }

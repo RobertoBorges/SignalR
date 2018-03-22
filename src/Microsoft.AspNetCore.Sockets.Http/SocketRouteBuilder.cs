@@ -13,12 +13,14 @@ namespace Microsoft.AspNetCore.Sockets
     public class SocketRouteBuilder
     {
         private readonly HttpConnectionDispatcher _dispatcher;
+        private readonly LegacyHttpConnectionDispatcher _legacyHttpConnectionDispatcher;
         private readonly RouteBuilder _routes;
 
-        public SocketRouteBuilder(RouteBuilder routes, HttpConnectionDispatcher dispatcher)
+        public SocketRouteBuilder(RouteBuilder routes, HttpConnectionDispatcher dispatcher, LegacyHttpConnectionDispatcher legacyHttpConnectionDispatcher)
         {
             _routes = routes;
             _dispatcher = dispatcher;
+            _legacyHttpConnectionDispatcher = legacyHttpConnectionDispatcher;
         }
 
         public void MapSocket(string path, Action<IConnectionBuilder> socketConfig) =>
@@ -34,6 +36,21 @@ namespace Microsoft.AspNetCore.Sockets
             var socket = connectionBuilder.Build();
             _routes.MapRoute(path, c => _dispatcher.ExecuteAsync(c, options, socket));
             _routes.MapRoute(path + "/negotiate", c => _dispatcher.ExecuteNegotiateAsync(c, options));
+        }
+
+        public void MapLegacySocket(PathString path, HttpSocketOptions options, Action<IConnectionBuilder> connectionConfig)
+        {
+            var connectionBuilder = new ConnectionBuilder(_routes.ServiceProvider);
+            connectionConfig(connectionBuilder);
+            var socket = connectionBuilder.Build();
+            // _routes.MapRoute(path, c => _legacyHttpConnectionDispatcher.ExecuteAsync(c, options, socket));
+            _routes.MapRoute(path + "/negotiate", c => _legacyHttpConnectionDispatcher.ExecuteNegotiateAsync(c, options, socket));
+            _routes.MapRoute(path + "/abort", c => _legacyHttpConnectionDispatcher.ExecuteAbortAsync(c, options, socket));
+            _routes.MapRoute(path + "/connect", c => _legacyHttpConnectionDispatcher.ExecuteConnectAsync(c, options, socket));
+            _routes.MapRoute(path + "/send", c => _legacyHttpConnectionDispatcher.ExecuteSendAsync(c, options, socket));
+            _routes.MapRoute(path + "/start", c => _legacyHttpConnectionDispatcher.ExecuteStartAsync(c, options, socket));
+            _routes.MapRoute(path + "/reconnect", c => _legacyHttpConnectionDispatcher.ExecuteReconnectAsync(c, options, socket));
+            _routes.MapRoute(path + "/ping", c => _legacyHttpConnectionDispatcher.ExecutePingAsync(c, options, socket));
         }
 
         public void MapEndPoint<TEndPoint>(string path) where TEndPoint : EndPoint

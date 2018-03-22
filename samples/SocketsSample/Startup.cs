@@ -2,11 +2,17 @@
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
+using System.Buffers;
+using System.Text;
+using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Protocols;
+using Microsoft.AspNetCore.Protocols.Features;
 using Microsoft.AspNetCore.Sockets;
 using Microsoft.Extensions.DependencyInjection;
 using MsgPack.Serialization;
+using Newtonsoft.Json;
 using SocketsSample.EndPoints;
 using SocketsSample.Hubs;
 using StackExchange.Redis;
@@ -44,6 +50,7 @@ namespace SocketsSample
             });
 
             services.AddSingleton<MessagesEndPoint>();
+            services.AddSingleton<LegacyEndPoint>();
         }
 
         // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
@@ -69,7 +76,63 @@ namespace SocketsSample
             app.UseSockets(routes =>
             {
                 routes.MapEndPoint<MessagesEndPoint>("/chat");
+
+                routes.MapLegacySocket("/foo", new HttpSocketOptions(), builder =>
+                {
+                    builder.UseEndPoint<LegacyEndPoint>();
+                });
             });
+        }
+
+        public class LegacyEndPoint : EndPoint
+        {
+            public override async Task OnConnectedAsync(ConnectionContext connection)
+            {
+                // Send the init payload
+                await connection.Transport.Output.WriteAsync(GetJsonBytes(new
+                {
+                    M = new object[0],
+                    S = 1
+                }));
+
+                if (connection.Features.Get<IConnectionInherentKeepAliveFeature>() == null)
+                {
+                    connection.Features.Get<IConnectionHeartbeatFeature>()?.OnHeartbeat(state =>
+                    {
+                        // Keep alive
+                        // _ = connection.Transport.Output.WriteAsync(Encoding.UTF8.GetBytes("{}"));
+                    }, 
+                    null);
+                }
+
+                while (true)
+                {
+                    var result = await connection.Transport.Input.ReadAsync();
+                    var buffer = result.Buffer;
+
+                    if (!buffer.IsEmpty)
+                    {
+                        System.Console.WriteLine($"Received: {buffer.Length} bytes");
+
+                        await connection.Transport.Output.WriteAsync(GetJsonBytes(
+                            new
+                            {
+                                M = new[] { Encoding.UTF8.GetString(buffer.ToArray()) }
+                            }
+                        ));
+                    }
+                    else if (result.IsCompleted)
+                    {
+                        break;
+                    }
+                    connection.Transport.Input.AdvanceTo(buffer.End);
+                }
+            }
+
+            private byte[] GetJsonBytes(object o)
+            {
+                return Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(o));
+            }
         }
     }
 }
