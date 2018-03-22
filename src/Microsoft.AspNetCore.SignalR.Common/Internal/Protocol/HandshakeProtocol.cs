@@ -34,6 +34,22 @@ namespace Microsoft.AspNetCore.SignalR.Internal.Protocol
             TextMessageFormatter.WriteRecordSeparator(output);
         }
 
+        public static void WriteResponseMessage(HandshakeResponseMessage responseMessage, IBufferWriter<byte> output)
+        {
+            using (var writer = CreateJsonTextWriter(output))
+            {
+                writer.WriteStartObject();
+                if (!string.IsNullOrEmpty(responseMessage.Error))
+                {
+                    writer.WritePropertyName(ErrorPropertyName);
+                    writer.WriteValue(responseMessage.Error);
+                }
+                writer.WriteEndObject();
+            }
+
+            TextMessageFormatter.WriteRecordSeparator(output);
+        }
+
         public static void WriteResponseMessage(HandshakeResponseMessage responseMessage, Stream output)
         {
             using (var writer = CreateJsonTextWriter(output))
@@ -49,6 +65,14 @@ namespace Microsoft.AspNetCore.SignalR.Internal.Protocol
             }
 
             TextMessageFormatter.WriteRecordSeparator(output);
+        }
+
+        private static JsonTextWriter CreateJsonTextWriter(IBufferWriter<byte> output)
+        {
+            var writer = new JsonTextWriter(new Utf8BufferTextWriter(output));
+            writer.CloseOutput = false;
+
+            return writer;
         }
 
         private static JsonTextWriter CreateJsonTextWriter(Stream output)
