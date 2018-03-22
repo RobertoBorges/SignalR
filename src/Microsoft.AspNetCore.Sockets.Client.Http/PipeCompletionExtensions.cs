@@ -1,7 +1,6 @@
-using System.IO.Pipelines;
 using System.Threading.Tasks;
 
-namespace Microsoft.AspNetCore.Sockets.Client.Http
+namespace System.IO.Pipelines
 {
     internal static class PipeCompletionExtensions
     {

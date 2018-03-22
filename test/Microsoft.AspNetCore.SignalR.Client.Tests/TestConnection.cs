@@ -2,91 +2,57 @@
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
-using System.Collections.Generic;
+using System.Buffers;
 using System.IO;
+using System.IO.Pipelines;
 using System.Text;
 using System.Threading;
-using System.Threading.Channels;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Protocols;
 using Microsoft.AspNetCore.SignalR.Internal.Formatters;
 using Microsoft.AspNetCore.SignalR.Internal.Protocol;
 using Microsoft.AspNetCore.Sockets.Client;
-using Microsoft.AspNetCore.Sockets.Client.Internal;
 using Newtonsoft.Json;
 
 namespace Microsoft.AspNetCore.SignalR.Client.Tests
 {
     internal class TestConnection : IConnection
     {
-        private TaskCompletionSource<object> _started = new TaskCompletionSource<object>();
-        private TaskCompletionSource<object> _disposed = new TaskCompletionSource<object>();
+        private readonly TaskCompletionSource<object> _started = new TaskCompletionSource<object>();
+        private readonly TaskCompletionSource<object> _disposed = new TaskCompletionSource<object>();
 
-        private Channel<byte[]> _sentMessages = Channel.CreateUnbounded<byte[]>();
-        private Channel<byte[]> _receivedMessages = Channel.CreateUnbounded<byte[]>();
-
-        private CancellationTokenSource _receiveShutdownToken = new CancellationTokenSource();
-        private Task _receiveLoop;
         private int _disposeCount = 0;
 
-        public event Action<IConnection, Exception> Closed;
         public Task Started => _started.Task;
         public Task Disposed => _disposed.Task;
-        public ChannelReader<byte[]> SentMessages => _sentMessages.Reader;
-        public ChannelWriter<byte[]> ReceivedMessages => _receivedMessages.Writer;
 
-        private bool _closed;
-        private object _closedLock = new object();
         private readonly Func<Task> _onStart;
         private readonly Func<Task> _onDispose;
 
-        public List<ReceiveCallback> Callbacks { get; } = new List<ReceiveCallback>();
+        public IDuplexPipe Application { get; }
+        public IDuplexPipe Transport { get; }
 
         public IFeatureCollection Features { get; } = new FeatureCollection();
         public int DisposeCount => _disposeCount;
 
         public TestConnection(Func<Task> onStart = null, Func<Task> onDispose = null)
         {
-            _receiveLoop = ReceiveLoopAsync(_receiveShutdownToken.Token);
             _onStart = onStart ?? (() => Task.CompletedTask);
             _onDispose = onDispose ?? (() => Task.CompletedTask);
+
+            var pair = DuplexPipe.CreateConnectionPair(PipeOptions.Default, PipeOptions.Default);
+            Application = pair.Application;
+            Transport = pair.Transport;
+
+            // Shut down the application pipe when the transport pipe is shut down.
+            Transport.Input.OnWriterCompleted((ex, o) => Shutdown(), null);
+            Transport.Output.OnReaderCompleted((ex, o) => Shutdown(), null);
         }
 
-        public Task AbortAsync(Exception ex) => DisposeCoreAsync(ex);
         public Task DisposeAsync() => DisposeCoreAsync();
 
-        // TestConnection isn't restartable
-        public Task StopAsync() => DisposeAsync();
-
-        private TaskQueue _taskQueue = new TaskQueue();
-
-        private async Task DisposeCoreAsync(Exception ex = null)
-        {
-            Interlocked.Increment(ref _disposeCount);
-            _disposed.TrySetResult(null);
-            await _onDispose();
-            TriggerClosed(ex);
-            _receiveShutdownToken.Cancel();
-            await _receiveLoop;
-        }
-
-        public async Task SendAsync(byte[] data, CancellationToken cancellationToken)
-        {
-            if (!_started.Task.IsCompleted)
-            {
-                throw new InvalidOperationException("Connection must be started before SendAsync can be called");
-            }
-
-            while (await _sentMessages.Writer.WaitToWriteAsync(cancellationToken))
-            {
-                if (_sentMessages.Writer.TryWrite(data))
-                {
-                    return;
-                }
-            }
-            throw new ObjectDisposedException("Unable to send message, underlying channel was closed");
-        }
+        public Task StartAsync() => StartAsync(TransferFormat.Binary);
 
         public async Task StartAsync(TransferFormat transferFormat)
         {
@@ -97,18 +63,11 @@ namespace Microsoft.AspNetCore.SignalR.Client.Tests
 
         public async Task ReadHandshakeAndSendResponseAsync()
         {
-            await SentMessages.ReadAsync();
+            var s = await ReadSentTextMessageAsync();
 
             var output = new MemoryStream();
             HandshakeProtocol.WriteResponseMessage(HandshakeResponseMessage.Empty, output);
-
-            await _receivedMessages.Writer.WriteAsync(output.ToArray());
-        }
-
-        public async Task<string> ReadSentTextMessageAsync()
-        {
-            var message = await SentMessages.ReadAsync();
-            return Encoding.UTF8.GetString(message);
+            await Application.Output.WriteAsync(output.ToArray());
         }
 
         public Task ReceiveJsonMessage(object jsonObject)
@@ -116,7 +75,54 @@ namespace Microsoft.AspNetCore.SignalR.Client.Tests
             var json = JsonConvert.SerializeObject(jsonObject, Formatting.None);
             var bytes = FormatMessageToArray(Encoding.UTF8.GetBytes(json));
 
-            return _receivedMessages.Writer.WriteAsync(bytes).AsTask();
+            return Application.Output.WriteAsync(bytes).AsTask();
+        }
+
+        public async Task<string> ReadSentTextMessageAsync()
+        {
+            // Read a single text message from the Application Input pipe
+            while (true)
+            {
+                var result = await Application.Input.ReadAsync();
+                var buffer = result.Buffer;
+                var consumed = buffer.Start;
+
+                try
+                {
+                    if (TextMessageParser.TryParseMessage(ref buffer, out var payload))
+                    {
+                        consumed = buffer.Start;
+                        return Encoding.UTF8.GetString(payload.ToArray());
+                    }
+                    else if (result.IsCompleted)
+                    {
+                        throw new InvalidOperationException("Out of data!");
+                    }
+                }
+                finally
+                {
+                    Application.Input.AdvanceTo(consumed);
+                }
+            }
+        }
+
+        private void Shutdown()
+        {
+            Application.Input.Complete();
+            Application.Output.Complete();
+        }
+
+        private async Task DisposeCoreAsync(Exception ex = null)
+        {
+            Interlocked.Increment(ref _disposeCount);
+            _disposed.TrySetResult(null);
+            await _onDispose();
+
+            // Simulate HttpConnection's behavior by Completing the Transport pipe and waiting for the Application pipe to complete
+            Transport.Input.Complete();
+            Transport.Output.Complete();
+
+            await Application.Input.WaitForWriterToComplete();
         }
 
         private byte[] FormatMessageToArray(byte[] message)
@@ -126,100 +132,6 @@ namespace Microsoft.AspNetCore.SignalR.Client.Tests
             TextMessageFormatter.WriteRecordSeparator(output);
             return output.ToArray();
         }
-
-        private async Task ReceiveLoopAsync(CancellationToken token)
-        {
-            try
-            {
-                while (await _receivedMessages.Reader.WaitToReadAsync(token))
-                {
-                    if (token.IsCancellationRequested)
-                    {
-                        break;
-                    }
-                    while (_receivedMessages.Reader.TryRead(out var message))
-                    {
-                        ReceiveCallback[] callbackCopies;
-                        lock (Callbacks)
-                        {
-                            callbackCopies = Callbacks.ToArray();
-                        }
-
-                        foreach (var callback in callbackCopies)
-                        {
-                            _ = _taskQueue.Enqueue(() => callback.InvokeAsync(message));
-                        }
-                    }
-                }
-                TriggerClosed();
-            }
-            catch (OperationCanceledException)
-            {
-                // Do nothing, we were just asked to shut down.
-                TriggerClosed();
-            }
-            catch (Exception ex)
-            {
-                TriggerClosed(ex);
-            }
-        }
-
-        private void TriggerClosed(Exception ex = null)
-        {
-            lock (_closedLock)
-            {
-                if (!_closed)
-                {
-                    _closed = true;
-                    Closed?.Invoke(this, ex);
-                }
-            }
-        }
-
-        public IDisposable OnReceived(Func<byte[], object, Task> callback, object state)
-        {
-            var receiveCallBack = new ReceiveCallback(callback, state);
-            lock (Callbacks)
-            {
-                Callbacks.Add(receiveCallBack);
-            }
-            return new Subscription(receiveCallBack, Callbacks);
-        }
-
-        public class ReceiveCallback
-        {
-            private readonly Func<byte[], object, Task> _callback;
-            private readonly object _state;
-
-            public ReceiveCallback(Func<byte[], object, Task> callback, object state)
-            {
-                _callback = callback;
-                _state = state;
-            }
-
-            public Task InvokeAsync(byte[] data)
-            {
-                return _callback(data, _state);
-            }
-        }
-
-        private class Subscription : IDisposable
-        {
-            private readonly ReceiveCallback _callback;
-            private readonly List<ReceiveCallback> _callbacks;
-            public Subscription(ReceiveCallback callback, List<ReceiveCallback> callbacks)
-            {
-                _callback = callback;
-                _callbacks = callbacks;
-            }
-
-            public void Dispose()
-            {
-                lock (_callbacks)
-                {
-                    _callbacks.Remove(_callback);
-                }
-            }
-        }
     }
 }
+

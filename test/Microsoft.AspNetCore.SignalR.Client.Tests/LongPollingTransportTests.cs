@@ -4,7 +4,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO.Pipelines;
-using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -15,9 +14,8 @@ using System.Threading.Channels;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Protocols;
 using Microsoft.AspNetCore.SignalR.Client.Tests;
-using Microsoft.AspNetCore.Sockets;
-using Microsoft.AspNetCore.Sockets.Client;
 using Microsoft.AspNetCore.Sockets.Client.Http;
+using Microsoft.AspNetCore.Sockets.Client.Internal;
 using Moq;
 using Moq.Protected;
 using Xunit;
